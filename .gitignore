@@ -29,3 +29,10 @@ logs/
 *.xlsx
 *.db
 *.sqlite
+
+# Config
+.env
+certtrack_mcp/.env
+certtrack_mcp/.env.sample
+
+

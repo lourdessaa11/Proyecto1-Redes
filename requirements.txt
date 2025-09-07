@@ -1,2 +1,5 @@
 requests
 python-dotenv
+mcp[cli]
+mcp-server-git
+

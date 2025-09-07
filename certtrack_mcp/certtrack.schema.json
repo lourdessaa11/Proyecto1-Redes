@@ -1,0 +1,180 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CertTrack-MCP Tools",
+  "type": "object",
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "inputSchema", "outputSchema"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "inputSchema": { "type": "object" },
+          "outputSchema": { "type": "object" }
+        }
+      }
+    }
+  },
+  "default": {
+    "tools": [
+      {
+        "name": "sheets_append_cert",
+        "description": "Agrega una fila al Sheet maestro con validaciones mínimas.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["spreadsheet_id", "row"],
+          "properties": {
+            "spreadsheet_id": { "type": "string" },
+            "row": {
+              "type": "object",
+              "required": ["id", "certificacion", "nombre", "fecha", "vigencia_meses"],
+              "properties": {
+                "id": { "type": "string" },
+                "certificacion": { "type": "string" },
+                "nombre": { "type": "string" },
+                "fecha": { "type": "string", "description": "YYYY-MM-DD" },
+                "vigencia_meses": { "type": "integer" },
+                "proveedor": { "type": "string" },
+                "tipo": { "type": "string" },
+                "costo": { "type": "number" }
+              }
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string" },
+            "inserted_at_row": { "type": "integer" }
+          }
+        }
+      },
+      {
+        "name": "drive_upload_pdf",
+        "description": "Sube un PDF a una carpeta de Drive y devuelve file_id y link.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["drive_folder_id", "local_path", "target_name"],
+          "properties": {
+            "drive_folder_id": { "type": "string" },
+            "local_path": { "type": "string" },
+            "target_name": { "type": "string" }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "file_id": { "type": "string" },
+            "web_view_link": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "pdf_validate_basic",
+        "description": "Valida que un PDF exista y tenga al menos N páginas.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["local_path"],
+          "properties": {
+            "local_path": { "type": "string" },
+            "min_pages": { "type": "integer", "default": 1 }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": { "type": "boolean" },
+            "pages": { "type": "integer" },
+            "message": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "alerts_schedule_due",
+        "description": "Calcula certificaciones que vencen en X días (alertas).",
+        "inputSchema": {
+          "type": "object",
+          "required": ["spreadsheet_id"],
+          "properties": {
+            "spreadsheet_id": { "type": "string" },
+            "days_before": { "type": "integer", "default": 30 }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "alerts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "email": { "type": "string" },
+                  "certificacion": { "type": "string" },
+                  "vence_el": { "type": "string" },
+                  "sheet_row": { "type": "integer" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "outlook_send_email",
+        "description": "Envía correo (Outlook/Microsoft Graph) con HTML.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["to", "subject", "html"],
+          "properties": {
+            "to": { "type": "string" },
+            "subject": { "type": "string" },
+            "html": { "type": "string" }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": { "type": "boolean" },
+            "message_id": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "list_my_certs",
+        "description": "Lista certificaciones por nombre (usuario) desde el maestro.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["spreadsheet_id", "nombre"],
+          "properties": {
+            "spreadsheet_id": { "type": "string" },
+            "nombre": { "type": "string" }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "certs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "certificacion": { "type": "string" },
+                  "fecha": { "type": "string" },
+                  "vigencia_meses": { "type": "integer" },
+                  "vence_el": { "type": "string" },
+                  "proveedor": { "type": "string" },
+                  "tipo": { "type": "string" },
+                  "costo": { "type": "number" },
+                  "drive_file_id": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
