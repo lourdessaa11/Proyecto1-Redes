@@ -79,13 +79,22 @@ def call_llm(messages, max_tokens=400):
 
     return text or "[Respuesta vacía]"
 
-def main():
-    print("Chat listo. Escribe 'salir' para terminar.")
-    print("Comando disponible: /setup-repo  (crea README y hace commit en demo-repo)\n")
 
+def main():
+    print("Chat listo. Escribe 'salir' para terminar.\n")
+    print("Comandos disponibles:")
+    print("  /setup-repo   → crea README y hace commit (demo FS+Git)")
+    print("  /mis-certs Nombre Apellido → lista certificaciones (CertTrack-MCP)")
+    print("  demo          → demo Filesystem MCP (sandbox)")
+    print("  gitdemo       → demo Git MCP (repo sandbox)\n")
+
+    # Historial de conversación (memoria de sesión)
     history = []
-    system_note = ("Eres un asistente técnico para un prototipo de consola. "
-                   "Responde de forma breve y directa, con pasos reproducibles.")
+    system_note = (
+        "Eres un asistente técnico para un prototipo de consola. "
+        "Responde de forma breve y directa, con pasos reproducibles."
+    )
+    # Nota: Para Anthropic simulamos 'system' como primer turno del asistente
     history.append({"role": "assistant", "content": [{"type": "text", "text": system_note}]})
 
     while True:
@@ -96,14 +105,33 @@ def main():
             print("Fin de la sesión.")
             break
 
-        # ←— Aquí el chatbot ejecuta MCP cuando se lo pides
+        # --- comandos especiales (MCP) ---
         if user_text.startswith("/setup-repo"):
             print("Ejecutando preparación de repo (Filesystem + Git)…")
-            asyncio.run(mcp_repo_setup())
+            asyncio.run(git_demo())
             print("Listo. Escribe otra instrucción o 'salir'.\n")
             continue
 
-        # Conversación normal con memoria
+        if user_text.lower().startswith("/mis-certs"):
+            # Formato: /mis-certs Nombre Apellido
+            partes = user_text.split(maxsplit=1)
+            if len(partes) < 2:
+                print("Uso: /mis-certs <Nombre y Apellido>\n")
+            else:
+                nombre = partes[1].strip()
+                print(f"Buscando certificaciones de: {nombre} …")
+                asyncio.run(certtrack_list(nombre))
+            continue
+
+        if user_text == "demo":
+            asyncio.run(fs_demo())
+            continue
+
+        if user_text == "gitdemo":
+            asyncio.run(git_demo())
+            continue
+
+        # --- conversación normal ---
         logging.info(f"user: {user_text}")
         history.append({"role": "user", "content": [{"type": "text", "text": user_text}]})
         reply = call_llm(history, max_tokens=500)
@@ -234,6 +262,33 @@ async def mcp_repo_setup():
             await log_mcp_call(git_sess, "git_commit", {"repo_path": repo, "message": "Add README via MCP"})
             st = await log_mcp_call(git_sess, "git_status", {"repo_path": repo})
             print("Estado post-commit:", st)
+
+async def certtrack_list(nombre: str):
+    """
+    Invoca el servidor CertTrack-MCP por STDIO y llama a la tool list_my_certs.
+    Lanza su propio proceso: `python -m certtrack_mcp.server`.
+    """
+    params = StdioServerParameters(
+        command="python",
+        args=["-m", "certtrack_mcp.server"],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Descubre herramientas (opcional, útil para depuración)
+            tools = await session.list_tools()
+            print("CertTrack tools:", [t.name for t in tools.tools])
+
+            # Llama a list_my_certs (spreadsheet_id es simbólico por ahora, usa CSV local)
+            res = await session.call_tool(
+                "list_my_certs",
+                arguments={"spreadsheet_id": "local", "nombre": nombre}
+            )
+            print("\n=== Resultado list_my_certs ===")
+            print(res)
+            print("================================\n")
+
 
 
 
