@@ -123,6 +123,22 @@ def main():
                 asyncio.run(certtrack_list(nombre))
             continue
 
+        if user_text.lower().startswith("/add-cert"):
+            # Uso:
+            # /add-cert id=abc certificacion="Redes 1" nombre="Laura Lopez" fecha=2025-09-01 vigencia_meses=12 proveedor=Cisco tipo=Tecnica costo=100
+            args_str = user_text[len("/add-cert"):].strip()
+            row = parse_kv_args(args_str)
+            requeridos = {"id","certificacion","nombre","fecha","vigencia_meses"}
+            faltan = [r for r in requeridos if r not in row or not row[r]]
+            if faltan:
+                print("Faltan campos:", ", ".join(faltan))
+                print('Ejemplo:\n  /add-cert id=u3-dev-003 certificacion="DevOps I" nombre="Laura Lopez" fecha=2025-10-01 vigencia_meses=12 proveedor=AWS tipo=Tecnica costo=150\n')
+            else:
+                print("Insertando certificación…")
+                asyncio.run(certtrack_add_cert(row))
+            continue
+
+
         if user_text == "demo":
             asyncio.run(fs_demo())
             continue
@@ -289,6 +305,41 @@ async def certtrack_list(nombre: str):
             print(res)
             print("================================\n")
 
+def parse_kv_args(text: str) -> dict:
+    """
+    Parsea pares clave=valor separados por espacio.
+    Soporta valores con espacios si van entre comillas.
+    Ej:
+      id=abc certificacion="Redes 1" nombre="Laura Lopez" fecha=2025-09-01 vigencia_meses=12 proveedor=Cisco tipo=Tecnica costo=100
+    """
+    import shlex
+    parts = shlex.split(text)
+    out = {}
+    for p in parts:
+        if "=" in p:
+            k, v = p.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+async def certtrack_add_cert(row: dict):
+    """
+    Lanza CertTrack-MCP y llama a sheets_append_cert con los campos recibidos.
+    Requeridos por el server: id, certificacion, nombre, fecha, vigencia_meses
+    """
+    params = StdioServerParameters(
+        command="python",
+        args=["-m", "certtrack_mcp.server"],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            res = await log_mcp_call(
+                session, "sheets_append_cert",
+                {"spreadsheet_id": "local", "row": row}
+            )
+            print("\n=== Resultado sheets_append_cert ===")
+            print(res)
+            print("====================================\n")
 
 
 
