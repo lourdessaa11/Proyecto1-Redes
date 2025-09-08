@@ -85,6 +85,8 @@ def main():
     print("Comandos disponibles:")
     print("  /setup-repo   → crea README y hace commit (demo FS+Git)")
     print("  /mis-certs Nombre Apellido → lista certificaciones (CertTrack-MCP)")
+    print("  /add-cert ... → agrega certificación al maestro (CertTrack-MCP)")
+    print("  /vencen días → muestra certificaciones que vencen en los próximos X días (default 30)")
     print("  demo          → demo Filesystem MCP (sandbox)")
     print("  gitdemo       → demo Git MCP (repo sandbox)\n")
 
@@ -136,6 +138,16 @@ def main():
             else:
                 print("Insertando certificación…")
                 asyncio.run(certtrack_add_cert(row))
+            continue
+
+        if user_text.lower().startswith("/vencen"):
+            # Uso: /vencen 45   (por defecto 30 si no pones número)
+            partes = user_text.split(maxsplit=1)
+            days = 30
+            if len(partes) == 2 and partes[1].strip().isdigit():
+                days = int(partes[1].strip())
+            print(f"Calculando alertas para los próximos {days} días…")
+            asyncio.run(certtrack_alerts(days))
             continue
 
 
@@ -322,7 +334,7 @@ def parse_kv_args(text: str) -> dict:
     return out
 
 async def certtrack_add_cert(row: dict):
-    """
+    r"""
     Lanza CertTrack-MCP y llama a sheets_append_cert con los campos recibidos.
     Requeridos por el server: id, certificacion, nombre, fecha, vigencia_meses
     """
@@ -341,6 +353,22 @@ async def certtrack_add_cert(row: dict):
             print(res)
             print("====================================\n")
 
+async def certtrack_alerts(days_before: int = 30):
+    r"""Lanza CertTrack-MCP y llama alerts_schedule_due (mock CSV)."""
+    params = StdioServerParameters(
+        command="python",
+        args=["-m", "certtrack_mcp.server"],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            res = await log_mcp_call(
+                session, "alerts_schedule_due",
+                {"spreadsheet_id": "local", "days_before": int(days_before)}
+            )
+            print("\n=== Alertas de vencimiento ===")
+            print(res)
+            print("================================\n")
 
 
 if __name__ == "__main__":

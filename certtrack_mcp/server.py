@@ -138,6 +138,54 @@ def sheets_append_cert(
 
     return {"status": "ok", "inserted_at_row": total_rows}
 
+@mcp.tool()
+def alerts_schedule_due(spreadsheet_id: str, days_before: int = 30) -> dict:
+    r"""
+    Calcula certificaciones que vencen dentro de 'days_before' días (mock sobre CSV local).
+    Retorna: { count, alerts: [ { email, certificacion, vence_el, sheet_row } ] }
+    """
+    if not os.path.isfile(DATA_CSV):
+        return {"count": 0, "alerts": [], "note": "no master.csv found"}
+
+    today = datetime.now().date()
+    alerts = []
+    with open(DATA_CSV, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        # +1 por encabezado; DictReader empieza en datos
+        row_index = 1
+        for row in reader:
+            row_index += 1
+            try:
+                vig_meses = int(row.get("vigencia_meses", "0") or 0)
+            except:
+                vig_meses = 0
+            fecha = row.get("fecha", "1970-01-01")
+            try:
+                vence = _parse_date(fecha) + relativedelta(months=vig_meses)
+                vence_date = vence.date()
+            except Exception:
+                continue
+
+            dias_restantes = (vence_date - today).days
+            if 0 <= dias_restantes <= int(days_before):
+                # mock: construye email a partir del nombre
+                nombre = (row.get("nombre", "") or "").strip()
+                # muy simple: "nombre.apellido@example.com" si hay dos palabras
+                parts = [p for p in nombre.split(" ") if p]
+                if len(parts) >= 2:
+                    email = f"{parts[0].lower()}.{parts[-1].lower()}@example.com"
+                else:
+                    email = f"{(nombre or 'user').lower().replace(' ', '.') }@example.com"
+
+                alerts.append({
+                    "email": email,
+                    "certificacion": row.get("certificacion", ""),
+                    "vence_el": vence.strftime("%Y-%m-%d"),
+                    "sheet_row": row_index
+                })
+
+    return {"count": len(alerts), "alerts": alerts}
+
 
 if __name__ == "__main__":
     # Corre por STDIO (ideal para integrarlo con tu cliente)
