@@ -87,6 +87,7 @@ def main():
     print("  /mis-certs Nombre Apellido → lista certificaciones (CertTrack-MCP)")
     print("  /add-cert ... → agrega certificación al maestro (CertTrack-MCP)")
     print("  /vencen días → muestra certificaciones que vencen en los próximos X días (default 30)")
+    print("  /correo to=... subject=\"...\" html=\"...\" → envía correo (mock) vía CertTrack-MCP")
     print("  demo          → demo Filesystem MCP (sandbox)")
     print("  gitdemo       → demo Git MCP (repo sandbox)\n")
 
@@ -139,6 +140,20 @@ def main():
                 print("Insertando certificación…")
                 asyncio.run(certtrack_add_cert(row))
             continue
+
+        if user_text.lower().startswith("/correo"):
+            # Uso:
+            # /correo to=alguien@example.com subject="Aviso de vencimiento"
+            #         html="<p>Tu certificación X vence el 2025-10-01.</p>"
+            args = parse_kv_args(user_text[len("/correo"):].strip())
+            faltan = [k for k in ("to", "subject", "html") if k not in args or not args[k]]
+            if faltan:
+                print("Faltan campos:", ", ".join(faltan))
+                print('Ejemplo:\n  /correo to=usuario@example.com subject="Aviso" html="<p>Texto del mensaje</p>"\n')
+            else:
+                asyncio.run(certtrack_send_email(args["to"], args["subject"], args["html"]))
+            continue
+
 
         if user_text.lower().startswith("/vencen"):
             # Uso: /vencen 45   (por defecto 30 si no pones número)
@@ -369,6 +384,25 @@ async def certtrack_alerts(days_before: int = 30):
             print("\n=== Alertas de vencimiento ===")
             print(res)
             print("================================\n")
+
+
+async def certtrack_send_email(to: str, subject: str, html: str):
+    """Invoca outlook_send_email del servidor CertTrack-MCP (mock)."""
+    params = StdioServerParameters(
+        command="python",
+        args=["-m", "certtrack_mcp.server"],
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            res = await log_mcp_call(
+                session, "outlook_send_email",
+                {"to": to, "subject": subject, "html": html}
+            )
+            print("\n=== Resultado outlook_send_email ===")
+            print(res)
+            print("====================================\n")
+
 
 
 if __name__ == "__main__":

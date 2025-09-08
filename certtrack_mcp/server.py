@@ -40,7 +40,7 @@ def health() -> dict:
 
 @mcp.tool()
 def list_my_certs(spreadsheet_id: str, nombre: str) -> dict:
-    """
+    r"""
     Lista certificaciones por nombre desde un CSV local 'data/master.csv'.
     Más adelante, este backend se conectará a Google Sheets usando spreadsheet_id.
     """
@@ -185,6 +185,39 @@ def alerts_schedule_due(spreadsheet_id: str, days_before: int = 30) -> dict:
                 })
 
     return {"count": len(alerts), "alerts": alerts}
+
+@mcp.tool()
+def outlook_send_email(to: str, subject: str, html: str) -> dict:
+    r"""
+    Mock de envío de correo (Outlook/Microsoft Graph).
+    Por ahora solo registra en consola/log y devuelve un message_id ficticio.
+    """
+    # Validaciones mínimas
+    to_s = (to or "").strip()
+    subj = (subject or "").strip()
+    body = (html or "").strip()
+    if not to_s or "@" not in to_s:
+        return {"ok": False, "message_id": "", "error": "destinatario inválido"}
+    if not subj:
+        return {"ok": False, "message_id": "", "error": "subject vacío"}
+    if not body:
+        return {"ok": False, "message_id": "", "error": "html vacío"}
+
+    # Simulación de envío
+    import time, hashlib
+    stamp = str(time.time())
+    message_id = "mock-" + hashlib.sha1(f"{to_s}|{subj}|{stamp}".encode("utf-8")).hexdigest()[:16]
+
+    # “Envío” (por ahora, solo imprime a consola)
+    print("\n--- MOCK OUTLOOK SEND ---")
+    print(f"To: {to_s}")
+    print(f"Subject: {subj}")
+    print(f"HTML (preview 200): {body[:200]}{'...' if len(body)>200 else ''}")
+    print(f"Message-Id: {message_id}")
+    print("-------------------------\n")
+
+    return {"ok": True, "message_id": message_id}
+
 
 
 if __name__ == "__main__":
