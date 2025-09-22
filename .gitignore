@@ -32,11 +32,13 @@ logs/
 
 # Config
 .env
-certtrack_mcp/.env
 
-# Credenciales y tokens de Google (NO subir)
+# CertTrack-MCP secrets & tokens
+certtrack_mcp/.env
 certtrack_mcp/google_credentials.json
 certtrack_mcp/token.json
+certtrack_mcp/graph_user_cache.json
+
 
 
 
