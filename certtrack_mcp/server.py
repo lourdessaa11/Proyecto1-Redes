@@ -93,35 +93,96 @@ def health() -> dict:
 
 @mcp.tool()
 def list_my_certs(spreadsheet_id: str, nombre: str) -> dict:
-    r"""
-    Lista certificaciones por nombre desde un CSV local 'data/master.csv'.
-    Más adelante, este backend se conectará a Google Sheets usando spreadsheet_id.
     """
-    certs = []
-    if not os.path.isfile(DATA_CSV):
-        return {"count": 0, "certs": [], "note": "no master.csv found"}
+    Lista certificaciones por 'nombre' (case-insensitive).
+    Lee desde Google Sheets si hay SHEET_ID + token; si no, CSV local (fallback).
+    """
+    def _normalize_headers(hs):
+        return [h.strip().lower() for h in hs]
 
-    with open(DATA_CSV, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row.get("nombre","").strip().lower() == nombre.strip().lower():
-                try:
-                    vig_meses = int(row.get("vigencia_meses","0"))
-                except:
-                    vig_meses = 0
-                vence = _vence_el(row.get("fecha","1970-01-01"), vig_meses)
-                certs.append({
-                    "certificacion": row.get("certificacion",""),
-                    "fecha": row.get("fecha",""),
-                    "vigencia_meses": vig_meses,
-                    "vence_el": vence,
-                    "proveedor": row.get("proveedor",""),
-                    "tipo": row.get("tipo",""),
-                    "costo": float(row.get("costo","0") or 0),
-                    "drive_file_id": row.get("drive_file_id","")
-                })
+    def _load_sheet_rows():
+        headers = read_range(SHEET_ID, HEADER_RANGE)
+        headers = headers[0] if headers else HEADERS
+        data = read_range(SHEET_ID, DATA_RANGE)
+        return headers, data
 
-    return {"count": len(certs), "certs": certs}
+    try:
+        if SHEET_ID and os.path.exists(os.path.join("certtrack_mcp","token.json")):
+            # === Sheets ===
+            headers, data = _load_sheet_rows()
+            hnorm = _normalize_headers(headers)
+            # mapeo robusto por nombre de columna
+            needed = ["id","certificacion","nombre","fecha","vigencia_meses","proveedor","tipo","costo","drive_file_id"]
+            idx = {col: hnorm.index(col) for col in needed if col in hnorm}
+
+            out = []
+            for r in data:
+                if not r:
+                    continue
+                nm = r[idx["nombre"]] if "nombre" in idx and len(r) > idx["nombre"] else ""
+                if nm.strip().lower() == nombre.strip().lower():
+                    item = {}
+                    for col in ["certificacion","fecha","vigencia_meses","proveedor","tipo","costo","drive_file_id"]:
+                        if col in idx and len(r) > idx[col]:
+                            item[col] = r[idx[col]]
+                        else:
+                            item[col] = ""
+                    # tipados suaves
+                    try:
+                        item["vigencia_meses"] = int(item["vigencia_meses"] or 0)
+                    except:
+                        item["vigencia_meses"] = 0
+                    try:
+                        item["costo"] = float(item["costo"] or 0)
+                    except:
+                        item["costo"] = 0.0
+
+                    # calcula vence_el localmente
+                    try:
+                        vence = _vence_el(item["fecha"] or "1970-01-01", item["vigencia_meses"])
+                    except:
+                        vence = ""
+                    item["vence_el"] = vence
+                    out.append(item)
+
+            return {"ok": True, "source": "sheets", "count": len(out), "certs": out}
+
+        else:
+            # === CSV fallback ===
+            if not os.path.isfile(DATA_CSV):
+                return {"ok": True, "source": "csv", "count": 0, "certs": [], "note": "no master.csv found"}
+
+            certs = []
+            with open(DATA_CSV, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if (row.get("nombre","") or "").strip().lower() == nombre.strip().lower():
+                        try:
+                            vig_meses = int(row.get("vigencia_meses","0") or 0)
+                        except:
+                            vig_meses = 0
+                        try:
+                            costo = float(row.get("costo","0") or 0)
+                        except:
+                            costo = 0.0
+                        try:
+                            vence = _vence_el(row.get("fecha","1970-01-01"), vig_meses)
+                        except:
+                            vence = ""
+                        certs.append({
+                            "certificacion": row.get("certificacion",""),
+                            "fecha": row.get("fecha",""),
+                            "vigencia_meses": vig_meses,
+                            "vence_el": vence,
+                            "proveedor": row.get("proveedor",""),
+                            "tipo": row.get("tipo",""),
+                            "costo": costo,
+                            "drive_file_id": row.get("drive_file_id","")
+                        })
+            return {"ok": True, "source": "csv", "count": len(certs), "certs": certs}
+
+    except Exception as e:
+        return {"ok": False, "error": f"{e}"}
 
 @mcp.tool()
 def sheets_append_cert(
