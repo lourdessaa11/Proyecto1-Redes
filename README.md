@@ -23,7 +23,7 @@ Console-based host application that integrates multiple **Model Context Protocol
   - `list_my_certs`: list certifications by person.
   - `sheets_append_cert`: insert a new certification (validates duplicates and date format).
   - `alerts_schedule_due`: compute upcoming expirations within X days.
-  - `outlook_send_email` (mock): prints a “sent” email with a message id.
+  - `outlook_send_email`: sends real email via Microsoft Graph (Outlook.com personal account with Device Code) or falls back to a mock provider if not configured.
 - **Google Sheets integration**
   - The master dataset is stored in a Google Sheet (append/read with fallback to CSV).
   - OAuth token persisted locally (`token.json`) for subsequent runs.
@@ -100,6 +100,50 @@ python certtrack_mcp/authorize_google.py
 - The script writes **`certtrack_mcp/token.json`** (also ignored by Git).
 
 > If you later change scopes, delete `certtrack_mcp/token.json` and re-run the script.
+
+## Email (Microsoft Graph with Outlook.com personal account — Device Code)
+ 
+This project can send real emails using Microsoft Graph if you sign in with a personal Outlook.com account.
+If email isn’t configured or fails, the server falls back to the mock provider (no external delivery).
+ 
+### Prerequisites
+- You must have a working Outlook.com mailbox (personal Microsoft account).
+- Register an Azure app that supports **personal Microsoft accounts** (see Setup).
+- Grant the **delegated** permission: `Mail.Send` for Microsoft Graph.
+ 
+### Setup (Azure App — Delegated OAuth / Device Code)
+1. Go to Azure Portal → Microsoft Entra ID → App registrations → **New registration**.
+2. Name: `CertTrack-Mailer-User`.
+3. **Supported account types**: *Accounts in any organizational directory and personal Microsoft accounts (e.g., Skype, Xbox)*.
+4. Leave Redirect URI empty (Device Code does not require redirect).
+5. Register the app and copy the **Application (client) ID**.
+6. App → **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated** → add **Mail.Send**.
+7. (If shown) App → **Authentication** → enable **Allow public client flows** (Device Code).
+ 
+### Local configuration
+Create or edit `certtrack_mcp/.env`:
+
+```
+MS_AUTH_MODE=user
+MS_CLIENT_ID=<your_app_client_id>
+```
+ 
+> In **user** mode you do **not** need `MS_TENANT_ID` or `MS_CLIENT_SECRET`.
+ 
+### First run (one-time consent)
+- Start the MCP server: `python certtrack_mcp/server.py`
+- Start the host: `python main.py`
+- Send a test email from the host:
+  ```
+  /correo to=you@outlook.com subject="Test Graph User" html="<p>Hello from Device Code</p>"
+  ```
+- The server prints a **Device Code** message with a URL and code. Open the URL, enter the code, sign in with your Outlook.com account, and accept **Mail.Send**.
+- After success, the host should show `provider: "graph_user"`. Next runs reuse the cached token.
+ 
+### Fallback behavior
+- If configuration is missing or the Graph call fails, the tool returns `provider: "mock"` and logs a simulated send. This keeps the project functional even without Graph.
+
+---
 
 ## Running
 
@@ -205,7 +249,6 @@ From the host, you can issue commands (see **Usage**).
 
 ## Optional Next Steps
 
-- Replace the Outlook mock with a real Microsoft Graph API client.
 - Deploy CertTrack-MCP remotely (e.g., Cloud Run).
 - Capture JSON-RPC traffic with Wireshark and document OSI/TCP-IP layers.
 
