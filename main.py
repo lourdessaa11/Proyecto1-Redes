@@ -8,6 +8,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import asyncio
 
+load_dotenv()
 
 # logging discreto
 LOG_DIR = "logs"
@@ -21,6 +22,16 @@ logging.basicConfig(
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 MODEL_ID = "claude-sonnet-4-20250514"
+
+REMOTE_MCP_URL = os.getenv("REMOTE_MCP_URL", "").strip() or "https://hello-mcp-remote-203021435289.us-central1.run.app/rpc"
+
+def jsonrpc_call(url: str, method: str, params: dict | None = None, req_id: int = 1) -> dict:
+    payload = {"jsonrpc": "2.0", "method": method, "id": req_id}
+    if params:
+        payload["params"] = params
+    r = requests.post(url, headers={"Content-Type": "application/json"}, data=json.dumps(payload), timeout=15)
+    r.raise_for_status()
+    return r.json()
 
 # helper para loggear llamadas MCP
 async def log_mcp_call(session, tool_name: str, arguments: dict):
@@ -88,6 +99,8 @@ def main():
     print("  /add-cert ... → agrega certificación al maestro (CertTrack-MCP)")
     print("  /vencen días → muestra certificaciones que vencen en los próximos X días (default 30)")
     print("  /correo to=... subject=\"...\" html=\"...\" → envía correo (mock) vía CertTrack-MCP")
+    print("  /health-remote → prueba el MCP remoto trivial (Cloud Run)")
+    print("  /echo-remote msg → envía un mensaje al MCP remoto trivial (Cloud Run)")
     print("  demo          → demo Filesystem MCP (sandbox)")
     print("  gitdemo       → demo Git MCP (repo sandbox)\n")
 
@@ -172,6 +185,28 @@ def main():
 
         if user_text == "gitdemo":
             asyncio.run(git_demo())
+            continue
+
+        elif user_text.startswith("/health-remote"):
+            try:
+                resp = jsonrpc_call(REMOTE_MCP_URL, "health", None, 1)
+                print("\n=== Remote health ===")
+                print(json.dumps(resp, indent=2, ensure_ascii=False))
+                print("=====================\n")
+            except Exception as e:
+                print(f"[remote] error: {e}")
+            continue
+
+        elif user_text.startswith("/echo-remote"):
+            # uso: /echo-remote tu mensaje aquí
+            msg = user_text[len("/echo-remote"):].strip() or "hello"
+            try:
+                resp = jsonrpc_call(REMOTE_MCP_URL, "echo", {"msg": msg}, 2)
+                print("\n=== Remote echo ===")
+                print(json.dumps(resp, indent=2, ensure_ascii=False))
+                print("===================\n")
+            except Exception as e:
+                print(f"[remote] error: {e}")
             continue
 
         # --- conversación normal ---
