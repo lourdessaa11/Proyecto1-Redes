@@ -1,7 +1,6 @@
 # certtrack_mcp/server.py
 import os
 import csv
-from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from datetime import datetime
@@ -377,10 +376,11 @@ def alerts_schedule_due(spreadsheet_id: str, days_before: int = 30) -> dict:
 @mcp.tool()
 def outlook_send_email(to: str, subject: str, html: str) -> dict:
     r"""
-    Mock de envío de correo (Outlook/Microsoft Graph).
-    Por ahora solo registra en consola/log y devuelve un message_id ficticio.
+    Envío de correo:
+    - Si MS_AUTH_MODE=user => usa OAuth delegado (Device Code) con cuenta @outlook.com
+    - Si MS_AUTH_MODE=app  => usa credenciales de aplicación (si están configuradas)
+    - Si falla o falta config => fallback MOCK
     """
-    # Validaciones mínimas
     to_s = (to or "").strip()
     subj = (subject or "").strip()
     body = (html or "").strip()
@@ -391,21 +391,40 @@ def outlook_send_email(to: str, subject: str, html: str) -> dict:
     if not body:
         return {"ok": False, "message_id": "", "error": "html vacío"}
 
-    # Simulación de envío
+    mode = (os.getenv("MS_AUTH_MODE", "user") or "user").lower()
+    # 1) Modo usuario (delegado) para cuentas personales
+    if mode == "user":
+        try:
+            from .graph_email_user import send_mail_via_graph_user, GraphUserEmailError
+            res = send_mail_via_graph_user(to_s, subj, body)
+            if res.get("ok"):
+                return {"ok": True, "message_id": res.get("message_id",""), "provider": "graph_user"}
+        except Exception as e:
+            # print(f"[graph_user] {e}")
+            pass
+
+    # 2) Modo aplicación (si el usuario decide configurarlo)
+    if mode == "app":
+        try:
+            from .graph_email import send_mail_via_graph, GraphEmailError
+            res = send_mail_via_graph(to_s, subj, body)
+            if res.get("ok"):
+                return {"ok": True, "message_id": res.get("message_id",""), "provider": "graph"}
+        except Exception as e:
+            # print(f"[graph_app] {e}")
+            pass
+
+    # 3) Fallback MOCK (si falla o no hay config)
     import time, hashlib
     stamp = str(time.time())
     message_id = "mock-" + hashlib.sha1(f"{to_s}|{subj}|{stamp}".encode("utf-8")).hexdigest()[:16]
-
-    # “Envío” (por ahora, solo imprime a consola)
     print("\n--- MOCK OUTLOOK SEND ---")
     print(f"To: {to_s}")
     print(f"Subject: {subj}")
     print(f"HTML (preview 200): {body[:200]}{'...' if len(body)>200 else ''}")
     print(f"Message-Id: {message_id}")
     print("-------------------------\n")
-
-    return {"ok": True, "message_id": message_id}
-
+    return {"ok": True, "message_id": message_id, "provider": "mock"}
 
 
 if __name__ == "__main__":
