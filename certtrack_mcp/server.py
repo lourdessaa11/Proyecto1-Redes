@@ -4,6 +4,10 @@ import csv
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
+from datetime import datetime
+from googleapiclient.errors import HttpError
+from .google_sheets import read_range, append_rows
+
 
 # SDK servidor MCP (está en mcp[cli])
 from mcp.server.fastmcp import FastMCP
@@ -13,6 +17,19 @@ mcp = FastMCP("CertTrack-MCP")
 
 # Carga variables (luego usaremos GOOGLE_SHEETS_MASTER_ID, etc.)
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
+SHEET_ID = os.getenv("GOOGLE_SHEETS_MASTER_ID")
+SHEET_TAB = os.getenv("GOOGLE_SHEETS_TAB", "Master")
+
+CSV_PATH = os.path.join("certtrack_mcp", "data", "master.csv")
+
+HEADERS = [
+    "id","certificacion","nombre","fecha",
+    "vigencia_meses","proveedor","tipo","costo","drive_file_id"
+]
+HEADER_RANGE = f"{SHEET_TAB}!A1:I1"
+DATA_RANGE   = f"{SHEET_TAB}!A2:I"
+
 
 DATA_CSV = os.path.join(os.path.dirname(__file__), "data", "master.csv")
 os.makedirs(os.path.dirname(DATA_CSV), exist_ok=True)
@@ -30,6 +47,42 @@ def _parse_date(yyyy_mm_dd: str) -> datetime:
 def _vence_el(fecha: str, vigencia_meses: int) -> str:
     d = _parse_date(fecha) + relativedelta(months=vigencia_meses)
     return d.strftime("%Y-%m-%d")
+
+def _use_sheets() -> bool:
+    # Sheets solo si hay ID y credenciales listas
+    return bool(SHEET_ID) and os.path.exists(os.path.join("certtrack_mcp","token.json"))
+
+def _ensure_csv_exists():
+    os.makedirs(os.path.dirname(DATA_CSV), exist_ok=True)
+    if not os.path.isfile(DATA_CSV):
+        with open(DATA_CSV, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([
+                "id","certificacion","nombre","fecha","vigencia_meses","proveedor","tipo","costo","drive_file_id"
+            ])
+
+def _read_all_rows_csv():
+    _ensure_csv_exists()
+    with open(DATA_CSV, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        return HEADERS, []
+    return rows[0], rows[1:]
+
+def _normalize_headers(hs):
+    return [h.strip().lower() for h in hs]
+
+def _as_row_from_payload(payload: dict, headers_lower: list[str]) -> list[str]:
+    p = {k.lower(): v for k, v in payload.items()}
+    return [str(p.get(h, "")) for h in headers_lower]
+
+def _load_sheet_rows():
+    headers = read_range(SHEET_ID, HEADER_RANGE)
+    headers = headers[0] if headers else HEADERS
+    data = read_range(SHEET_ID, DATA_RANGE)
+    return headers, data
+
+def _validate_date(fmtdate: str) -> None:
+    datetime.strptime(fmtdate, "%Y-%m-%d")  # YYYY-MM-DD
 
 @mcp.tool()
 def health() -> dict:
@@ -72,14 +125,14 @@ def list_my_certs(spreadsheet_id: str, nombre: str) -> dict:
 
 @mcp.tool()
 def sheets_append_cert(
-    spreadsheet_id: str,
+    spreadsheet_id: str,  # se ignora por ahora; usamos GOOGLE_SHEETS_MASTER_ID del .env
     row: dict
 ) -> dict:
     """
-    Inserta una certificación en el CSV local (mock de Google Sheets).
-    Requiere: id, certificacion, nombre, fecha (YYYY-MM-DD), vigencia_meses.
-    Opcional: proveedor, tipo, costo, drive_file_id.
-    Retorna: status, inserted_at_row (número de fila incluyendo encabezado).
+    Inserta una certificación en Google Sheets (si hay SHEET_ID + token) o en CSV (fallback).
+    Valida duplicado por 'id' y formato de fecha YYYY-MM-DD.
+    Requiere: id, certificacion, nombre, fecha, vigencia_meses
+    Opcional: proveedor, tipo, costo, drive_file_id
     """
     required = ["id", "certificacion", "nombre", "fecha", "vigencia_meses"]
     missing = [k for k in required if not str(row.get(k, "")).strip()]
@@ -88,55 +141,78 @@ def sheets_append_cert(
 
     # valida fecha
     try:
-        _ = _parse_date(row["fecha"])
+        _validate_date(str(row["fecha"]))
     except Exception:
         return {"status": "error: fecha debe tener formato YYYY-MM-DD"}
 
     # normaliza tipos
     try:
-        vig_meses = int(row.get("vigencia_meses", 0))
+        row["vigencia_meses"] = int(row.get("vigencia_meses", 0))
     except Exception:
         return {"status": "error: vigencia_meses debe ser entero"}
 
     try:
-        costo_val = float(row.get("costo", 0) or 0)
+        row["costo"] = float(row.get("costo", 0) or 0)
     except Exception:
         return {"status": "error: costo debe ser numérico"}
 
-    # asegura que exista el CSV
-    os.makedirs(os.path.dirname(DATA_CSV), exist_ok=True)
-    if not os.path.isfile(DATA_CSV):
-        with open(DATA_CSV, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(["id","certificacion","nombre","fecha","vigencia_meses","proveedor","tipo","costo","drive_file_id"])
+    # completa llaves faltantes
+    payload = {**{k: "" for k in HEADERS}, **{k: v for k, v in row.items()}}
 
-    # verifica duplicado por id
-    with open(DATA_CSV, "r", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for existing in r:
-            if existing.get("id", "").strip() == str(row["id"]).strip():
-                return {"status": f"error: id duplicado: {row['id']}"}
+    try:
+        if _use_sheets():
+            # === Google Sheets ===
+            headers, data = _load_sheet_rows()
+            hnorm = _normalize_headers(headers)
 
-    # inserta al final
-    with open(DATA_CSV, "a", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow([
-            row.get("id","").strip(),
-            row.get("certificacion","").strip(),
-            row.get("nombre","").strip(),
-            row.get("fecha","").strip(),
-            str(vig_meses),
-            row.get("proveedor","").strip(),
-            row.get("tipo","").strip(),
-            str(costo_val),
-            row.get("drive_file_id","").strip(),
-        ])
+            # validar duplicado por 'id'
+            if "id" in hnorm:
+                id_idx = hnorm.index("id")
+                existing = {r[id_idx] for r in data if r and len(r) > id_idx}
+                if str(payload["id"]).strip() in existing:
+                    return {"status": f"error: id duplicado: {payload['id']}"}
+            else:
+                # si la hoja no tiene encabezado, usamos HEADERS canónicos
+                headers, hnorm = HEADERS, _normalize_headers(HEADERS)
 
-    # calcula número de fila (incluye encabezado)
-    with open(DATA_CSV, "r", encoding="utf-8") as f:
-        total_rows = sum(1 for _ in f)
+            row_out = _as_row_from_payload(payload, hnorm)
+            if len(row_out) < len(headers):
+                row_out += [""] * (len(headers) - len(row_out))
 
-    return {"status": "ok", "inserted_at_row": total_rows}
+            append_rows(SHEET_ID, f"{SHEET_TAB}!A1", [row_out])  # values.append (USER_ENTERED)
+            return {"status": "ok", "store": "sheets"}
+
+        else:
+            # === CSV fallback ===
+            headers, data = _read_all_rows_csv()
+            hnorm = _normalize_headers(headers)
+            if "id" in hnorm:
+                id_idx = hnorm.index("id")
+                existing = {r[id_idx] for r in data if r and len(r) > id_idx}
+                if str(payload["id"]).strip() in existing:
+                    return {"status": f"error: id duplicado: {payload['id']}"}
+            else:
+                headers, hnorm = HEADERS, _normalize_headers(HEADERS)
+
+            row_out = _as_row_from_payload(payload, hnorm)
+            if len(row_out) < len(headers):
+                row_out += [""] * (len(headers) - len(row_out))
+
+            _ensure_csv_exists()
+            with open(DATA_CSV, "a", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(row_out)
+
+            # calcula número de fila (incluye encabezado)
+            with open(DATA_CSV, "r", encoding="utf-8") as f:
+                total_rows = sum(1 for _ in f)
+
+            return {"status": "ok", "store": "csv", "inserted_at_row": total_rows}
+
+    except HttpError as e:
+        return {"status": f"error: Sheets API error: {e}"}
+    except Exception as e:
+        return {"status": f"error: {e}"}
+
 
 @mcp.tool()
 def alerts_schedule_due(spreadsheet_id: str, days_before: int = 30) -> dict:
