@@ -274,54 +274,105 @@ def sheets_append_cert(
     except Exception as e:
         return {"status": f"error: {e}"}
 
-
 @mcp.tool()
 def alerts_schedule_due(spreadsheet_id: str, days_before: int = 30) -> dict:
-    r"""
-    Calcula certificaciones que vencen dentro de 'days_before' días (mock sobre CSV local).
+    """
+    Calcula certificaciones que vencen dentro de 'days_before' días.
+    Lee desde Google Sheets si hay SHEET_ID + token; si no, CSV local (fallback).
     Retorna: { count, alerts: [ { email, certificacion, vence_el, sheet_row } ] }
     """
-    if not os.path.isfile(DATA_CSV):
-        return {"count": 0, "alerts": [], "note": "no master.csv found"}
+    from datetime import date
+    today = date.today()
 
-    today = datetime.now().date()
-    alerts = []
-    with open(DATA_CSV, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        # +1 por encabezado; DictReader empieza en datos
-        row_index = 1
-        for row in reader:
-            row_index += 1
-            try:
-                vig_meses = int(row.get("vigencia_meses", "0") or 0)
-            except:
-                vig_meses = 0
-            fecha = row.get("fecha", "1970-01-01")
-            try:
-                vence = _parse_date(fecha) + relativedelta(months=vig_meses)
-                vence_date = vence.date()
-            except Exception:
-                continue
+    try:
+        alerts = []
+        if _use_sheets():
+            # === Sheets ===
+            headers, data = _load_sheet_rows()
+            h = _normalize_headers(headers)
+            # columnas requeridas
+            need = ["nombre","certificacion","fecha","vigencia_meses"]
+            if not all(c in h for c in need):
+                return {"count": 0, "alerts": [], "error": "Encabezados incompletos en la hoja"}
 
-            dias_restantes = (vence_date - today).days
-            if 0 <= dias_restantes <= int(days_before):
-                # mock: construye email a partir del nombre
-                nombre = (row.get("nombre", "") or "").strip()
-                # muy simple: "nombre.apellido@example.com" si hay dos palabras
-                parts = [p for p in nombre.split(" ") if p]
-                if len(parts) >= 2:
-                    email = f"{parts[0].lower()}.{parts[-1].lower()}@example.com"
-                else:
-                    email = f"{(nombre or 'user').lower().replace(' ', '.') }@example.com"
+            idx = {c: h.index(c) for c in need}
+            # fila 1 es encabezado; datos empiezan en A2 => row_index arranca en 2
+            row_index = 2
+            for r in data:
+                nombre = (r[idx["nombre"]] if len(r) > idx["nombre"] else "").strip()
+                cert   = (r[idx["certificacion"]] if len(r) > idx["certificacion"] else "").strip()
+                fecha  = (r[idx["fecha"]] if len(r) > idx["fecha"] else "").strip()
+                try:
+                    vig_m = int((r[idx["vigencia_meses"]] if len(r) > idx["vigencia_meses"] else "0") or 0)
+                except:
+                    vig_m = 0
 
-                alerts.append({
-                    "email": email,
-                    "certificacion": row.get("certificacion", ""),
-                    "vence_el": vence.strftime("%Y-%m-%d"),
-                    "sheet_row": row_index
-                })
+                # calcula vence_el
+                try:
+                    vence = _parse_date(fecha) + relativedelta(months=vig_m)
+                    dias_restantes = (vence.date() - today).days
+                except:
+                    row_index += 1
+                    continue
 
-    return {"count": len(alerts), "alerts": alerts}
+                if 0 <= dias_restantes <= int(days_before):
+                    # email simple a partir del nombre
+                    parts = [p for p in nombre.split(" ") if p]
+                    if len(parts) >= 2:
+                        email = f"{parts[0].lower()}.{parts[-1].lower()}@example.com"
+                    else:
+                        email = f"{(nombre or 'user').lower().replace(' ', '.')}@example.com"
+
+                    alerts.append({
+                        "email": email,
+                        "certificacion": cert,
+                        "vence_el": vence.strftime("%Y-%m-%d"),
+                        "sheet_row": row_index
+                    })
+                row_index += 1
+
+            return {"count": len(alerts), "alerts": alerts, "source": "sheets"}
+
+        else:
+            # === CSV fallback (tu lógica actual) ===
+            if not os.path.isfile(DATA_CSV):
+                return {"count": 0, "alerts": [], "note": "no master.csv found", "source": "csv"}
+
+            with open(DATA_CSV, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                row_index = 1  # +1 por encabezado; DictReader arranca en datos
+                for row in reader:
+                    row_index += 1
+                    try:
+                        vig_meses = int(row.get("vigencia_meses", "0") or 0)
+                    except:
+                        vig_meses = 0
+                    fecha = row.get("fecha", "1970-01-01")
+                    try:
+                        vence = _parse_date(fecha) + relativedelta(months=vig_meses)
+                        dias_restantes = (vence.date() - today).days
+                    except:
+                        continue
+
+                    if 0 <= dias_restantes <= int(days_before):
+                        nombre = (row.get("nombre", "") or "").strip()
+                        parts = [p for p in nombre.split(" ") if p]
+                        if len(parts) >= 2:
+                            email = f"{parts[0].lower()}.{parts[-1].lower()}@example.com"
+                        else:
+                            email = f"{(nombre or 'user').lower().replace(' ', '.') }@example.com"
+
+                        alerts.append({
+                            "email": email,
+                            "certificacion": row.get("certificacion", ""),
+                            "vence_el": vence.strftime("%Y-%m-%d"),
+                            "sheet_row": row_index
+                        })
+
+            return {"count": len(alerts), "alerts": alerts, "source": "csv"}
+
+    except Exception as e:
+        return {"count": 0, "alerts": [], "error": f"{e}"}
 
 @mcp.tool()
 def outlook_send_email(to: str, subject: str, html: str) -> dict:
